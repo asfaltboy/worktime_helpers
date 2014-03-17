@@ -7,7 +7,7 @@ const Shell = imports.gi.Shell;
 const Lang = imports.lang;
 const GLib = imports.gi.GLib;
 
-let text, button, time, message, loopCall=null, timeLabel;
+let text, button, time, message, loopCall=null, timeLabel, firstRun=true;
 let requiredTime = 180;
 let blink = '';
 
@@ -48,32 +48,58 @@ function calculateTotalTime(lines) {
     let times = d.split(',');
     if (!times || times.length != 3) return true;  // skip bad times
     if (times[1] == 0 || times[2] == 0) return true;  // skip 0 times
-    let t1 = new Date();
-    t1.setHours(times[1].split(':')[0]);
-    t1.setMinutes(times[1].split(':')[1]);
-    let t2 = new Date();
-    t2.setHours(times[2].split(':')[0]);
-    t2.setMinutes(times[2].split(':')[1]);
-    let daily_seconds = t2 - t1;
-    hours += daily_seconds / 1000 / 60 / 60;
+    hours += getHoursWorked(times);
   });
   return hours;
 }
 
-function checkRemainingTime() {
-  let path = '/home/pavel/hours_logs/';
-  let now = new Date();
+function calculateWorkedToday(line) {
+  let times = line.split(',');
+  if (!times || times.length != 3) return 0;  // skip bad times
+  if (times[1] == 0 || times[2] == 0) return 0;  // skip 0 times
+  return getHoursWorked(times);
+}
+
+function getHoursWorked(times) {
+  let t1 = new Date();
+  t1.setHours(times[1].split(':')[0]);
+  t1.setMinutes(times[1].split(':')[1]);
+
+  let t2 = new Date();
+  t2.setHours(times[2].split(':')[0]);
+  t2.setMinutes(times[2].split(':')[1]);
+
+  return (t2 - t1) / 1000 / 60 / 60;  // return delta in hours
+}
+
+function getHoursFileContent(now) {
   let year = now.getFullYear();
   let month = now.getMonth() + 1;
-  if (month < 10) month = '0' + month;
-  let content = Shell.get_file_contents_utf8_sync(path + year + '-' + month + '.csv');
-  if (content) {
-    let totalPassed = calculateTotalTime(content.split('\n').slice(1));  // pass all days - skip header
-    message = 'Total hours worked this month: ' + totalPassed.toFixed(0);
-    if (SHOW_BLINKING) blink = (!!blink) ? '' : '*';
-    time = 'Remaining: ' + (requiredTime - totalPassed).toFixed(0) + ' h ' + blink;
-    if (timeLabel !== undefined) timeLabel.set_text(time);
+  month = (month < 10) ? '0' + month : month;
+  let path = '/home/pavel/hours_logs/';
+  return Shell.get_file_contents_utf8_sync(path + year + '-' + month + '.csv');
+}
+
+function checkRemainingTime() {
+  let now = new Date();
+  if (now % 60 == 0 || firstRun == true) {
+    firstRun = false;
+    let content = getHoursFileContent(now);
+    if (content) {
+      // pass all days - skip header
+      let totalWorked = calculateTotalTime(content.split('\n').slice(1));
+      let todays_hours = content.split('\n').slice(-1)[0];
+      delta = totalWorked - calculateElapsedWorkHours() + calculateWorkedToday(todays_hours);
+      message = 'Total hours worked this month: ' + totalWorked.toFixed(0) +
+                '\nBalance delta: ' + delta.toFixed(0);
+      time = 'Remaining: ' + (requiredTime - totalWorked).toFixed(0) + ' h ' + blink;
+    } else {
+      time = 'Remaining: ' + requiredTime;
+    }
   }
+
+  if (SHOW_BLINKING) blink = (!!blink) ? '' : '*';
+  if (timeLabel !== undefined) timeLabel.set_text(time);
   return true
 }
 
@@ -108,6 +134,24 @@ function calculateRequiredTime() {
   */
   let today = new Date();
   requiredTime = REQUIRED_HOURS_DAY * getWorkDaysInMonth(today.getMonth(), today.getFullYear());
+}
+
+function getElapsedWorkDays() {
+  var work_days = 0;
+  var today = new Date();
+  range(1, today.getDate()).forEach(function(d) {
+    if (WEEKEND_DAYS.indexOf((new Date(today.getFullYear(), today.getMonth(), d)).getDay()) === -1) work_days++;
+  });
+  return work_days - 1;
+}
+
+function calculateElapsedWorkHours() {
+  /*
+  calculates the number of days in the current month and returns
+  the required number of work hours.
+  */
+  let today = new Date();
+  return REQUIRED_HOURS_DAY * getElapsedWorkDays();
 }
 
 function init() {
